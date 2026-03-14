@@ -1,0 +1,75 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+## Question 1: Estimating Cloud Storage Latency (Z-Interval)
+
+**Problem:** A data engineer wants to estimate the average time it takes to retrieve a file from a specific AWS S3 bucket. Based on previous logs, the population standard deviation is known to be $\sigma = 12$ ms. A sample of $n = 100$ retrievals shows a mean time of $\bar{x} = 45$ ms.
+
+-   Calculate a **95% Confidence Interval** for the true mean retrieval time.
+
+    ```{r}
+    # Parameters
+    x_bar <- 45
+    sigma <- 12
+    n <- 100
+    conf_level <- 0.95
+
+    # Calculations
+    z_crit <- qnorm(1 - (1 - conf_level)/2)
+    se <- sigma / sqrt(n)
+    me <- z_crit * se
+
+    # Result
+    ci <- c(x_bar - me, x_bar + me)
+    cat("95% CI for Mean Latency:", round(ci[1], 2), "ms to", round(ci[2], 2), "ms")
+    ```
+
+    ## Question 2: Testing API Performance (t-test)
+
+    **Problem:** A developer claims that a new microservice averages less than **200 ms** per request. You run a small pilot test of $n = 15$ requests and find a sample mean of $\bar{x} = 188$ ms and a sample standard deviation of $s = 24$ ms.
+
+    -   At a **5% significance level (**$\alpha = 0.05$), is there enough evidence to support the developer's claim? ($H_a: \mu < 200$)
+
+    ```{r}
+        # Summary Statistics
+        mu_0 <- 200
+        x_bar <- 188
+        s <- 24
+        n <- 15
+        alpha <- 0.05
+
+        # Manual t-test
+        t_stat <- (x_bar - mu_0) / (s / sqrt(n))
+        p_val <- pt(t_stat, df = n - 1) # Lower tail because claim is "less than"
+
+        # Result
+        cat("t-statistic:", round(t_stat, 3), "\np-value:", round(p_val, 4))
+        if(p_val < alpha) {
+          print("Conclusion: Reject H0. Evidence supports the developer's claim.")
+        } else {
+          print("Conclusion: Fail to Reject H0. Evidence does not support the claim.")
+        }
+    ```
+
+## Question 3: User Engagement Rates (Proportion CI)
+
+**Problem:** A social media app wants to estimate the proportion of users who click on a new "reels" feature. In a random sample of $n = 1000$ active users, $220$ clicked the feature.
+
+-   Calculate a **99% Confidence Interval** for the true population proportion of users who click the feature.
+
+    ```{r}
+    # Parameters
+    n <- 1000
+    x <- 220
+    p_hat <- x / n
+    conf_level <- 0.99
+
+    # Built-in R function (correct=FALSE for standard normal approximation)
+    prop_result <- prop.test(x, n, conf.level = 0.99, correct = FALSE)
+
+    # Result
+    cat("Sample Proportion:", p_hat, "\n99% CI for Proportion:", 
+        round(prop_result$conf.int[1], 4), "to", round(prop_result$conf.int[2], 4))
+    ```
