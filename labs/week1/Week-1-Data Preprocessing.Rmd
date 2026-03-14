@@ -1,0 +1,462 @@
+---
+title: "BSIT 375: Knowledge Discovery and Data Science"
+subtitle: "Lecture Notes & Lab Supplement: The Data Preprocessing Pipeline"
+author: "Prepared by: Tek Raj Pant"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: true
+    theme: cosmo
+    highlight: tango
+    number_sections: true
+---
+
+```{r setup, include=TRUE}
+required_packages <- c("tidyverse", "caret", "infotheo", "knitr", "kableExtra")
+
+for (pkg in required_packages) {
+  if (!require(pkg, character.only = TRUE)) {
+    install.packages(pkg)
+    library(pkg, character.only = TRUE)
+  }
+}
+
+# Set seed for reproducibility
+set.seed(123)
+
+
+```
+
+# Pillar 1: Data Cleaning
+
+## Handling Missing Data
+
+1.  **MCAR (Missing Completely at Random)**: $P(M | Y_{obs}, Y_{mis}) = P(M)$. Purely accidental; no relationship with any value.
+
+```{r}
+# Initializing sample data
+df_raw <- data.frame(
+  ID = 1:5,
+  Score = c(85, 90, NA, 88, NA)
+)
+kable(df_raw, caption = "Initial data")
+# Handling MCAR: Listwise Deletion (Removing any row with NA)
+df_mcar_fixed <- df_raw %>% 
+  drop_na(Score)
+
+kable(df_mcar_fixed, caption = "MCAR Treatment: Listwise Deletion")
+```
+
+2.  **MAR (Missing at Random)**: $P(M | Y_{obs}, Y_{mis}) = P(M | Y_{obs})$. Systematic but observable through other variables.
+
+```{r}
+df_mar <- data.frame(
+  Age = c(25, 30, NA, 22, 28, NA, 35),
+  Salary = c(50000, 60000, 55000, 48000, 58000, 62000, 70000)
+)
+
+# Handling MAR: Simple Imputation (Replacing NA with the Mean)
+df_mar_fixed <- df_mar %>%
+  mutate(Age = replace_na(Age, mean(Age, na.rm = TRUE)))
+
+kable(df_mar_fixed, caption = "MAR Treatment: Mean Imputation")
+```
+
+3.  **MNAR (Missing Not at Random)**: Depends on $Y_{mis}$. The data is "hiding" (e.g., high-income earners not reporting salary).
+
+```{r}
+df_mnar <- data.frame(
+  User = c("A", "B", "C", "D"),
+  Gender = c("M", "F", NA, "M") 
+)
+
+# Handling MNAR: Flagging as a new category "Unknown"
+df_mnar_fixed <- df_mnar %>%
+  mutate(Gender = as.character(Gender)) %>%
+  mutate(Gender = replace_na(Gender, "Not Disclosed"))
+
+
+kable(df_mnar_fixed, caption = "MNAR Treatment: Category Flagging")
+```
+
+## Noise Smoothing and Outlier Detection
+
+Outlier detection identifies data points that deviate significantly from the rest. Two common statistical heuristics are the Z-Score method (parametric) and the IQR method (non-parametric).
+
+### Z-Score Method (Parametric)
+
+Assumes a Normal Distribution. Flag $x_i$ if $|z_i| > 3$.
+
+$$ z_i = \frac{x_i - \mu}{\sigma} $$
+
+```{r zscore}
+# Generate data with outliers
+set.seed(123)
+data_z <- c(rnorm(50, mean = 50, sd = 5), 95, 10)  # two outliers added
+
+# Calculate Z-scores
+z_scores <- (data_z - mean(data_z)) / sd(data_z)
+outliers_z <- data_z[abs(z_scores) > 3]
+
+# Create a data frame for display
+z_df <- data.frame(
+  Value = data_z,
+  Z_Score = round(z_scores, 2),
+  Outlier = ifelse(abs(z_scores) > 3, "Yes", "No")
+)
+kable(z_df[abs(z_scores) > 3 | seq_along(data_z) %in% 51:52, ], 
+      caption = "Z-Score Outlier Detection (showing outliers and nearby values)")
+
+cat("Z-Score Outliers detected:", outliers_z)
+```
+
+### IQR Method (Non-Parametric)
+
+Uses the interquartile range and is robust to non-normal distributions.
+
+$$ IQR = Q_3 - Q_1 $$ Inner fences: $[Q_1 - 1.5 \times IQR, Q_3 + 1.5 \times IQR]$
+
+```{r iqr}
+# Using the same data
+Q1 <- quantile(data_z, 0.25)
+Q3 <- quantile(data_z, 0.75)
+IQR_val <- Q3 - Q1
+lower_bound <- Q1 - 1.5 * IQR_val
+upper_bound <- Q3 + 1.5 * IQR_val
+
+outliers_iqr <- data_z[data_z < lower_bound | data_z > upper_bound]
+
+# Create a summary
+iqr_df <- data.frame(
+  Value = data_z,
+  Outlier_IQR = ifelse(data_z < lower_bound | data_z > upper_bound, "Yes", "No")
+)
+kable(iqr_df[data_z < lower_bound | data_z > upper_bound | seq_along(data_z) %in% 51:52, ],
+      caption = "IQR Outlier Detection")
+
+cat("IQR Outliers detected:", outliers_iqr)
+
+# Visual comparison
+par(mfrow = c(1, 2))
+boxplot(data_z, main = "Boxplot (IQR Outliers)", col = "lightblue")
+hist(data_z, main = "Histogram with Z-score outliers", col = "lightgreen")
+abline(v = c(mean(data_z) - 3*sd(data_z), mean(data_z) + 3*sd(data_z)), col = "red", lwd = 2)
+```
+
+## Redundancy and Correlation Analysis
+
+Redundancy occurs when an attribute can be derived from another, leading to multi-collinearity. We use different measures for numerical and categorical data.
+
+### Pearson Correlation Coefficient (Numerical Data)
+
+Measures linear relationship between two continuous variables.
+
+$$ r = \frac{\sum (x_i - \bar{x})(y_i - \bar{y})}{(n-1)s_x s_y} $$
+
+```{r pearson}
+# 1. Setup Data
+N <- 100
+set.seed(123)
+
+# Independent variable
+x_val <- seq(1, 10, length.out = N)
+
+# Dependent variables for different scenarios
+y_positive <- x_val                         # Perfect Positive
+y_negative <- 10 - x_val + rnorm(N, sd=0.5) # Strong Negative
+y_none     <- rnorm(N)                     # No Correlation
+
+# 2. Create the Layout (1 row, 3 columns)
+par(mfrow = c(1, 3))
+
+# Plot 1: Positive
+plot(x_val, y_positive, main="Positive (r=1.0)", 
+     xlab="Variable A", ylab="Variable B", col="blue", pch=19)
+abline(lm(y_positive ~ x_val), col="red") # Trendline
+
+# Plot 2: Negative
+plot(x_val, y_negative, main="Negative (r ≈ -0.9)", 
+     xlab="Variable A", ylab="Variable B", col="darkgreen", pch=19)
+abline(lm(y_negative ~ x_val), col="red") # Trendline
+
+# Plot 3: None
+plot(x_val, y_none, main="None (r ≈ 0)", 
+     xlab="Variable A", ylab="Variable B", col="gray", pch=19)
+abline(lm(y_none ~ x_val), col="red") # Trendline
+
+# Reset layout to default
+par(mfrow = c(1, 1))
+```
+
+### Chi-Square ($\chi^2$) Test (Categorical Data)
+
+Tests independence between two categorical variables. High dependence implies redundancy.
+
+$$ \chi^2 = \sum \frac{(O_{ij} - E_{ij})^2}{E_{ij}} $$ where $E_{ij} = \frac{(\text{row total}_i \times \text{column total}_j)}{\text{grand total}}$
+
+```{r chisq}
+# Contingency table: Gender vs. Shopping Preference
+observed <- matrix(c(20, 30, 40, 10), nrow = 2, byrow = TRUE,
+                   dimnames = list(Gender = c("Male", "Female"),
+                                   Preference = c("Online", "Offline")))
+observed
+
+# Chi-square test
+chisq_test <- chisq.test(observed)
+
+# Display results
+kable(observed, caption = "Observed Frequencies")
+kable(chisq_test$expected, caption = "Expected Frequencies under Independence")
+
+cat("Chi-square statistic:", chisq_test$statistic, "\n")
+cat("p-value:", chisq_test$p.value, "\n")
+cat("Degrees of freedom:", chisq_test$parameter, "\n")
+
+# Manual calculation to verify
+expected <- chisq_test$expected
+chi_manual <- sum((observed - expected)^2 / expected)
+cat("Manual chi-square:", chi_manual, "\n")
+```
+
+# Pillar 2: Data Transformation
+
+Data transformation converts data into a state that enhances model performance. This includes scaling and encoding.
+
+## Normalization Techniques
+
+### Min-Max Scaling (Rescaling)
+
+Scales data to a fixed range, typically $[0,1]$.
+
+$$ x' = \frac{x - \min(x)}{\max(x) - \min(x)} $$
+
+```{r minmax}
+# Sample data with an outlier
+data_scale <- c(rnorm(10, mean = 100, sd = 20), 500)
+
+# Min-Max scaling function
+minmax <- function(x) {
+  (x - min(x)) / (max(x) - min(x))
+}
+
+scaled_minmax <- minmax(data_scale)
+
+# Create comparison table
+df_scale <- data.frame(
+  Original = data_scale,
+  MinMax = round(scaled_minmax, 4)
+)
+kable(df_scale, caption = "Min-Max Scaling (with outlier)")
+```
+
+### Standardization (Z-score Normalization)
+
+Centers data to mean 0 and standard deviation 1.
+
+$$ z = \frac{x - \mu}{\sigma} $$
+
+```{r standardization}
+scaled_z <- as.numeric(scale(data_scale))
+
+df_scale$Z_score <- round(scaled_z, 4)
+kable(df_scale, caption = "Standardization (Z-score) with outlier")
+
+# Compare robustness
+cat("Min-Max scaled outlier:", scaled_minmax[which.max(data_scale)], "\n")
+cat("Z-score of outlier:", scaled_z[which.max(data_scale)], "\n")
+```
+
+## Categorical Encoding
+
+### One-Hot Encoding (Nominal Data)
+
+Creates binary columns for each category.
+
+```{r onehot}
+# Sample nominal data
+colors <- c("Red", "Blue", "Green", "Blue", "Red", "Green")
+
+# Using model.matrix for one-hot encoding
+onehot_matrix <- model.matrix(~ colors - 1)  # -1 removes intercept
+colnames(onehot_matrix) <- gsub("colors", "", colnames(onehot_matrix))
+
+kable(onehot_matrix, caption = "One-Hot Encoded Colors")
+
+# Avoiding dummy variable trap: drop one column
+onehot_reduced <- onehot_matrix[, -1, drop = FALSE]
+kable(onehot_reduced, caption = "One-Hot Encoding (k-1 columns)")
+```
+
+### Label Encoding (Ordinal Data)
+
+Assigns integers to ordered categories.
+
+```{r label-encoding}
+# Ordinal data: Education level
+education <- c("High School", "Bachelor", "Master", "PhD", "Bachelor", "High School")
+# Define order
+edu_order <- c("High School", "Bachelor", "Master", "PhD")
+edu_encoded <- as.numeric(factor(education, levels = edu_order, ordered = TRUE))
+
+df_edu <- data.frame(
+  Education = education,
+  Encoded = edu_encoded
+)
+kable(df_edu, caption = "Label Encoding for Ordinal Data")
+```
+
+| Feature        | One-Hot Encoding        | Label Encoding        |
+|----------------|-------------------------|-----------------------|
+| Data Type      | Nominal (No Order)      | Ordinal (Has Order)   |
+| Dimensionality | Increases ($k$ columns) | Stays same (1 column) |
+| Algorithm Risk | Multi-collinearity      | Improper Ordinal Bias |
+
+# Pillar 3: Data Reduction
+
+Data reduction techniques reduce data volume while preserving integrity. This improves efficiency and mitigates the curse of dimensionality.
+
+## Dimensionality Reduction: Principal Component Analysis (PCA)
+
+PCA transforms correlated variables into uncorrelated principal components that capture maximum variance.
+
+```{r pca}
+# Create correlated dataset
+set.seed(123)
+n <- 50
+x1 <- rnorm(n, mean = 10, sd = 3)
+x2 <- 0.7 * x1 + rnorm(n, sd = 2)   # correlated with x1
+x3 <- rnorm(n, mean = 5, sd = 1)     # independent
+x4 <- -0.5 * x1 + 0.3 * x2 + rnorm(n, sd = 1)
+
+df_pca <- data.frame(x1, x2, x3, x4)
+
+# Perform PCA (scale = TRUE to standardize)
+pca_result <- prcomp(df_pca, center = TRUE, scale. = TRUE)
+
+# Summary of variance explained
+summary(pca_result)
+
+# Variance table
+var_explained <- pca_result$sdev^2 / sum(pca_result$sdev^2)
+var_table <- data.frame(
+  PC = paste0("PC", 1:4),
+  `Variance` = round(var_explained, 3),
+  `Cumulative` = round(cumsum(var_explained), 3)
+)
+kable(var_table, caption = "Proportion of Variance Explained by Principal Components")
+
+# Scree plot
+plot(pca_result, type = "l", main = "Scree Plot")
+
+# Biplot
+biplot(pca_result, main = "PCA Biplot")
+```
+
+## Numerosity Reduction
+
+### Parametric Reduction: Linear Regression
+
+Instead of storing all data, store only model parameters.
+
+```{r regression}
+x <- 1:10
+y <- 3 * x + rnorm(10, sd = 2)
+model <- lm(y ~ x)
+
+# Model parameters (intercept and slope)
+coef(model)
+
+# Plot
+plot(x, y, main = "Linear Regression Model", pch = 16)
+abline(model, col = "red", lwd = 2)
+```
+
+### Non-Parametric Reduction: Histograms, Clustering, Sampling
+
+```{r reduction-examples}
+# Histogram binning (reduce continuous data to bin counts)
+hist_data <- rnorm(200, mean = 50, sd = 10)
+hist(hist_data, breaks = 10, col = "lightblue", main = "Histogram Binning")
+
+# Clustering: represent data by cluster centroids
+kmeans_result <- kmeans(df_pca, centers = 3, nstart = 10)
+centroids <- kmeans_result$centers
+kable(centroids, caption = "Cluster Centroids (Reduced Representation)")
+
+# Sampling
+sample_rows <- sample(1:nrow(df_pca), size = 10)
+sample_data <- df_pca[sample_rows, ]
+kable(sample_data, caption = "Random Sample (10 rows)")
+```
+
+| Strategy       | Approach                 | Key Benefit                     |
+|------------------|------------------------|-------------------------------|
+| Dimensionality | Feature Extraction (PCA) | Eliminates redundant attributes |
+| Numerosity     | Data Approximation       | Reduces storage and CPU load    |
+| Sampling       | Representative Subset    | Faster prototyping and EDA      |
+
+# Pillar 4: Data Discretization
+
+Discretization converts continuous variables into interval labels, simplifying data for rule-based algorithms.
+
+## Binning Techniques
+
+### Equal-Width (Distance) Binning
+
+Divides the range into intervals of equal width.
+
+```{r equalwidth}
+# Example prices
+prices <- c(5, 10, 11, 13, 15, 35, 50, 55, 72, 92, 204, 215)
+
+# Equal-width binning with 3 bins
+breaks_width <- seq(min(prices), max(prices), length.out = 4)  # 3 bins need 4 breaks
+bins_width <- cut(prices, breaks = breaks_width, include.lowest = TRUE,
+                  labels = c("Bin1 [5,75]", "Bin2 (75,145]", "Bin3 (145,215]"))
+
+df_width <- data.frame(Price = prices, Bin = bins_width)
+kable(df_width, caption = "Equal-Width Binning (3 bins)")
+```
+
+### Equal-Frequency (Depth) Binning
+
+Ensures each bin contains approximately the same number of observations.
+
+```{r equalfreq}
+# Equal-frequency binning using quantiles
+bins_freq <- cut(prices, 
+                 breaks = quantile(prices, probs = seq(0, 1, length.out = 4)),
+                 include.lowest = TRUE,
+                 labels = c("Bin1 [5,13]", "Bin2 (13,55]", "Bin3 (55,215]"))
+
+df_freq <- data.frame(Price = prices, Bin = bins_freq)
+kable(df_freq, caption = "Equal-Frequency Binning (3 bins)")
+```
+
+## Concept Hierarchies
+
+Group low-level data into higher-level concepts using domain knowledge.
+
+```{r concept-hierarchy}
+# Age groups
+ages <- c(12, 25, 70, 8, 30, 65, 18, 45, 80, 5)
+
+# Define breaks and labels
+age_groups <- cut(ages, 
+                  breaks = c(0, 18, 60, 120),
+                  labels = c("Child", "Adult", "Senior"),
+                  right = FALSE)
+
+df_age <- data.frame(Age = ages, Group = age_groups)
+kable(df_age, caption = "Age Group Hierarchy")
+```
+
+| Method | Optimization Goal | Risk |
+|------------------------|------------------------|------------------------|
+| Equal-Width | Maintains value distribution | Sensitive to outliers |
+| Equal-Frequency | Maintains sample distribution | May group very different values |
+| Entropy-Based | Maximizes Class Purity | Requires target labels (Supervised) |
+
+# 

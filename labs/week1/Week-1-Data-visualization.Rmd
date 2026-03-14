@@ -1,0 +1,368 @@
+---
+title: "BSIT 375: Knowledge Discovery and Data Science - Lecture Notes: Exploratory Data Analysis"
+author: "Prepared by: Tek Raj Pant"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    theme: readable
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(gridExtra)
+```
+
+```{r getting-to-know-data}
+# Use built-in dataset 'mtcars' for illustration
+data(mtcars)
+str(mtcars)           # structure and data types
+dim(mtcars)           # dimensions
+summary(mtcars)       # basic summaries for all variables
+
+# Check for missing values
+anyNA(mtcars)
+```
+
+------------------------------------------------------------------------
+
+## Exploring Categorical Variables
+
+Categorical variables take values from a set of categories. EDA for categorical variables focuses on frequencies and proportions.
+
+### Frequency Tables
+
+A frequency table lists each category along with its count and percentage. For example, a survey might have gender categories: Male (45%), Female (53%), Other (2%).
+
+```{r freq-tables}
+# Create a small categorical dataset
+survey <- data.frame(
+  gender = c("Male", "Female", "Female", "Male", "Other", "Female", "Male", "Female")
+)
+
+# Frequency table
+freq <- table(survey$gender)
+freq
+
+# Proportions
+prop.table(freq)
+```
+
+### Bar Charts and Pie Charts
+
+Bar charts display frequencies as bar heights; pie charts show proportions as slices. These visualizations quickly reveal dominant categories and rare ones.
+
+```{r bar-pie}
+# Bar chart using base R
+barplot(freq, main = "Gender Distribution", xlab = "Gender", ylab = "Count", col = "steelblue")
+
+# Pie chart
+pie(freq, main = "Gender Distribution", col = c("lightblue", "pink", "lightgreen"))
+
+# Using ggplot2 for a more polished bar chart
+ggplot(survey, aes(x = gender)) +
+  geom_bar(fill = "steelblue") +
+  labs(title = "Gender Distribution", x = "Gender", y = "Count")
+```
+
+### Contingency Tables (Cross-Tabulation)
+
+When two categorical variables are of interest, a contingency table shows the joint distribution. For example, a table of gender versus purchase (yes/no) can suggest associations.
+
+```{r contingency}
+# Add a purchase column
+survey$purchase <- c("Yes", "No", "Yes", "No", "Yes", "No", "No", "Yes")
+
+# Contingency table
+cont_table <- table(survey$gender, survey$purchase)
+cont_table
+
+# Mosaic plot for visual association
+mosaicplot(cont_table, main = "Gender vs Purchase", color = TRUE)
+```
+
+### Chi-Square Test for Independence
+
+Although more formal, the chi-square test can be used during EDA to assess whether two categorical variables are related. The test statistic is: $$
+\chi^2 = \sum \frac{(O_{ij} - E_{ij})^2}{E_{ij}}
+$$ where $O_{ij}$ is the observed count and $E_{ij}$ is the expected count under independence.
+
+```{r chisq}
+chisq.test(cont_table)
+```
+
+------------------------------------------------------------------------
+
+## Exploring Numeric Variables
+
+Numeric variables require different tools. The goal is to understand their distribution, central tendency, spread, and shape.
+
+### Summary Statistics
+
+-   **Center**: mean, median, mode.
+-   **Spread**: range, variance, standard deviation, interquartile range (IQR).
+-   **Shape**: skewness (symmetric, left‑skewed, right‑skewed) and kurtosis (peakedness).
+
+```{r numeric-summary}
+# Use mtcars$mpg
+mpg <- mtcars$mpg
+
+mean(mpg)
+median(mpg)
+# Mode function (R doesn't have a built-in mode for numeric)
+mode_mpg <- as.numeric(names(sort(table(mpg), decreasing = TRUE)[1]))
+mode_mpg
+
+range(mpg)
+var(mpg)
+sd(mpg)
+IQR(mpg)
+
+# Skewness and kurtosis (using moments package)
+# install.packages("moments") if needed
+library(moments)
+skewness(mpg)
+kurtosis(mpg)
+```
+
+### Histograms
+
+A histogram partitions the data into bins and shows the frequency of observations in each bin. It reveals modality (unimodal, bimodal), gaps, and outliers.
+
+```{r hist}
+hist(mpg, breaks = 10, col = "lightblue", main = "Histogram of MPG", xlab = "Miles per Gallon")
+
+# ggplot2 version
+ggplot(mtcars, aes(x = mpg)) +
+  geom_histogram(bins = 10, fill = "steelblue", color = "black") +
+  labs(title = "Histogram of MPG", x = "Miles per Gallon")
+```
+
+### Boxplots
+
+A boxplot displays the five‑number summary: minimum, first quartile (Q1), median, third quartile (Q3), and maximum. Points beyond $Q1 - 1.5 \times IQR$ or $Q3 + 1.5 \times IQR$ are plotted individually as potential outliers.
+
+```{r boxplot}
+boxplot(mpg, main = "Boxplot of MPG", ylab = "Miles per Gallon", col = "lightgreen")
+
+# Horizontal boxplot
+boxplot(mpg, horizontal = TRUE, main = "Boxplot of MPG", xlab = "Miles per Gallon", col = "lightgreen")
+```
+
+### Quantile-Quantile (Q-Q) Plots
+
+Q-Q plots compare the quantiles of the data against the quantiles of a theoretical distribution (e.g., normal). If the points fall roughly on a straight line, the data follow that distribution.
+
+```{r qqplot}
+qqnorm(mpg, main = "Normal Q-Q Plot of MPG")
+qqline(mpg, col = "red")
+```
+
+------------------------------------------------------------------------
+
+## Exploring Multivariate Relationships
+
+Understanding relationships between variables is central to EDA.
+
+### Scatter Plots
+
+For two numeric variables, a scatter plot shows each observation as a point. Patterns (linear, curved, clustered) can be detected. Color or size can encode a third variable.
+
+```{r scatter}
+plot(mtcars$wt, mtcars$mpg, 
+     xlab = "Weight (1000 lbs)", ylab = "Miles per Gallon", 
+     main = "Scatter Plot: MPG vs Weight", pch = 19, col = "blue")
+
+# ggplot2 version with a third variable (cyl) as color
+ggplot(mtcars, aes(x = wt, y = mpg, color = factor(cyl))) +
+  geom_point(size = 3) +
+  labs(title = "MPG vs Weight", x = "Weight", y = "MPG", color = "Cylinders")
+```
+
+### Correlation
+
+The Pearson correlation coefficient $r$ measures the strength and direction of a linear relationship: $$
+r = \frac{\sum (x_i - \bar{x})(y_i - \bar{y})}{\sqrt{\sum (x_i - \bar{x})^2 \sum (y_i - \bar{y})^2}}
+$$ Values near $\pm 1$ indicate strong linear association; 0 indicates no linear relationship. However, scatter plots are essential because Anscombe's quartet shows that different patterns can yield the same correlation.
+
+```{r cor}
+cor(mtcars$wt, mtcars$mpg)
+
+# Correlation matrix for several variables
+cor_matrix <- cor(mtcars[, c("mpg", "disp", "hp", "wt")])
+round(cor_matrix, 2)
+```
+
+### Side-by-Side Boxplots
+
+To compare a numeric variable across categories, side‑by‑side boxplots are invaluable. For example, income distribution by education level.
+
+```{r side-by-side-box}
+# Using mtcars: compare mpg across number of cylinders
+boxplot(mpg ~ cyl, data = mtcars, 
+        xlab = "Number of Cylinders", ylab = "Miles per Gallon",
+        main = "MPG by Cylinder Count", col = c("lightblue", "lightgreen", "lightpink"))
+
+# ggplot2 version
+ggplot(mtcars, aes(x = factor(cyl), y = mpg, fill = factor(cyl))) +
+  geom_boxplot() +
+  labs(title = "MPG by Cylinder Count", x = "Cylinders", y = "MPG") +
+  theme(legend.position = "none")
+```
+
+### Heatmaps
+
+A heatmap of correlations (or other measures) provides a quick overview of many variables. Color intensity represents the strength of association.
+
+```{r heatmap}
+# Simple heatmap using base R's image()
+image(cor_matrix, main = "Correlation Heatmap", axes = FALSE)
+axis(1, at = seq(0,1,length.out = ncol(cor_matrix)), labels = colnames(cor_matrix), las = 2)
+axis(2, at = seq(0,1,length.out = ncol(cor_matrix)), labels = rownames(cor_matrix), las = 2)
+
+# Using corrplot package for better visualization
+# install.packages("corrplot") if needed
+library(corrplot)
+corrplot(cor_matrix, method = "color", type = "upper", tl.col = "black")
+```
+
+------------------------------------------------------------------------
+
+## Selecting Interesting Subsets of the Data for Further Investigation
+
+EDA often reveals subgroups that behave differently. For instance, a scatter plot might show two distinct clusters. These subsets can be isolated for separate analysis, leading to more targeted models. Techniques include:
+
+-   **Brushing** in interactive graphics.
+-   **Conditioning** (trellis plots) where plots are drawn for each level of a conditioning variable.
+-   **Automatic interaction detection** (e.g., regression trees) that partitions the data.
+
+```{r subsets}
+# Example: subset of cars with high mpg (> 25)
+high_mpg <- subset(mtcars, mpg > 25)
+high_mpg
+
+# Conditioning plot: scatter plot by cylinder
+ggplot(mtcars, aes(x = wt, y = mpg)) +
+  geom_point() +
+  facet_wrap(~ cyl) +
+  labs(title = "MPG vs Weight by Number of Cylinders")
+```
+
+------------------------------------------------------------------------
+
+## Using EDA to Uncover Anomalous Fields
+
+Anomalous fields are variables that contain errors or unexpected values. EDA can uncover:
+
+-   **Implausible values**: Age = 200, negative income.
+-   **Inconsistent coding**: "M" and "Male" in the same variable.
+-   **Unexpected missing patterns**: Missing not at random.
+
+Graphical tools like histograms and frequency tables help spot these issues. For example, a histogram of age with a spike at 999 likely indicates a placeholder for missing.
+
+```{r anomalies}
+# Create a small dataset with an anomaly
+data_with_error <- mtcars
+data_with_error$mpg[5] <- 999   # introduce an extreme value
+
+# Histogram shows spike at 999
+hist(data_with_error$mpg, breaks = 20, main = "MPG with Anomaly", xlab = "MPG")
+
+# Boxplot highlights outlier
+boxplot(data_with_error$mpg, main = "Boxplot with Anomaly")
+
+# Frequency table of categorical variable with inconsistent coding
+survey_bad <- data.frame(
+  gender = c("Male", "Female", "M", "F", "male", "female")
+)
+table(survey_bad$gender)   # shows multiple categories for same gender
+```
+
+------------------------------------------------------------------------
+
+## Binning Based on Predictive Value
+
+Binning (discretizing) a numeric variable can improve interpretability and handle non‑linear relationships. However, arbitrary binning may lose information. An alternative is to bin based on the variable's relationship with a target (predictive value). For instance, using a decision tree to find optimal cut points that maximize separation of classes. This yields bins that are meaningful for prediction.
+
+Common approaches:
+
+-   **Equal width bins**: Simple but may hide patterns.
+-   **Equal frequency bins**: Each bin has roughly the same number of observations.
+-   **Supervised binning**: Use the target variable to define bins (e.g., chi‑merge, entropy‑based).
+
+```{r binning}
+# Equal width bins for mpg
+mtcars$mpg_eqwidth <- cut(mtcars$mpg, breaks = 3, labels = c("Low", "Medium", "High"))
+table(mtcars$mpg_eqwidth)
+
+# Equal frequency bins
+mtcars$mpg_eqfreq <- cut(mtcars$mpg, 
+                         breaks = quantile(mtcars$mpg, probs = seq(0,1,length.out=4)), 
+                         include.lowest = TRUE, 
+                         labels = c("Low", "Medium", "High"))
+table(mtcars$mpg_eqfreq)
+
+# Supervised binning using a decision tree to predict 'am' (transmission) from mpg
+library(rpart)
+tree <- rpart(am ~ mpg, data = mtcars, method = "class")
+print(tree)   # shows splits at certain mpg values
+```
+
+------------------------------------------------------------------------
+
+## Deriving New Variables: Flag Variables
+
+Flag (indicator) variables are binary (0/1) variables that encode a condition. They can be derived from existing variables to capture important distinctions. Examples:
+
+-   From a date variable, create flags for weekend/weekday, holiday, season.
+-   From a numeric variable, create a flag for missing values.
+-   From a categorical variable, create flags for each category (one‑hot encoding) or for rare categories combined as "other".
+
+Flags can capture non‑linear effects and interactions without changing the scale.
+
+```{r flag-vars}
+# Create a flag for cars with high horsepower (> 200)
+mtcars$high_hp_flag <- ifelse(mtcars$hp > 200, 1, 0)
+
+# Flag for missing values (example: set some NAs)
+mtcars_na <- mtcars
+mtcars_na$mpg[1:3] <- NA
+mtcars_na$missing_mpg_flag <- ifelse(is.na(mtcars_na$mpg), 1, 0)
+
+# One-hot encoding for cylinder variable
+mtcars$cyl_4 <- ifelse(mtcars$cyl == 4, 1, 0)
+mtcars$cyl_6 <- ifelse(mtcars$cyl == 6, 1, 0)
+mtcars$cyl_8 <- ifelse(mtcars$cyl == 8, 1, 0)
+head(mtcars[, c("cyl", "cyl_4", "cyl_6", "cyl_8")])
+```
+
+------------------------------------------------------------------------
+
+## Deriving New Variables: Numerical Variables
+
+New numerical variables can be created by transforming or combining existing ones. Common derivations include:
+
+-   **Ratios**: e.g., debt-to-income ratio.
+-   **Differences**: e.g., year-over-year change.
+-   **Aggregations**: e.g., average purchase amount per customer.
+-   **Polynomial terms**: $x^2$, $x^3$ to model curvature.
+-   **Interactions**: product of two variables to capture joint effects.
+
+These derived variables can improve model performance by encoding domain knowledge.
+
+```{r numeric-deriv}
+# Ratio: weight per horsepower
+mtcars$wt_per_hp <- mtcars$wt / mtcars$hp
+
+# Polynomial term: squared weight
+mtcars$wt_sq <- mtcars$wt^2
+
+# Interaction: weight * horsepower
+mtcars$wt_hp_interact <- mtcars$wt * mtcars$hp
+
+head(mtcars[, c("wt", "hp", "wt_per_hp", "wt_sq", "wt_hp_interact")])
+```
