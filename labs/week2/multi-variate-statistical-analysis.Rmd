@@ -1,0 +1,153 @@
+---
+title: "BSIT 375: Multivariate Statistical Analysis - Lab Components"
+author: "Instructor: Tek Raj Pant"
+date: "March 2026"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+required_packages <- c( "caret", "infotheo", "knitr", "kableExtra")
+
+# Check which packages are not installed and install them
+new_packages <- required_packages[!(required_packages %in% installed.packages()[,"Package"])]
+if(length(new_packages)) install.packages(new_packages)
+
+# Load all packages
+lapply(required_packages, library, character.only = TRUE)
+
+```
+
+## Two-Sample t-Test: App Redesign A/B Test
+
+**Scenario:** Comparing daily active usage (minutes) between Group A (Old) and Group B (New).
+
+```{r}
+group_a <- rnorm(40, mean = 25.3, sd = 5.1)
+group_b <- rnorm(35, mean = 28.7, sd = 6.3)
+
+# Conduct the test
+t_result <- t.test(group_b, group_a, alternative = "two.sided", var.equal = FALSE)
+
+(t_result)
+
+```
+
+## Two-Sample Z-Test: Email Marketing Proportions
+
+**Scenario:** Comparing open rates for Subject Line A vs. Subject Line B.
+
+```{r}
+# Data from lecture notes
+successes <- c(325, 412)
+totals <- c(5000, 4800)
+
+# prop.test performs the chi-square test for proportions 
+# (which is equivalent to the z-test squared)
+prop_result <- prop.test(successes, totals, correct = FALSE)
+
+prop_result
+```
+
+## Chi-Square Test: Customer Satisfaction Homogeneity
+
+**Scenario:** Testing if satisfaction levels are consistent across North, South, and West regions.
+
+```{r}
+# Constructing the contingency table
+satisfaction_data <- matrix(c(120, 60, 20, 
+                              90, 50, 30, 
+                              110, 40, 25), 
+                            nrow = 3, byrow = TRUE)
+
+rownames(satisfaction_data) <- c("North", "South", "West")
+colnames(satisfaction_data) <- c("Satisfied", "Neutral", "Dissatisfied")
+
+# Perform Chi-Square Test
+chi_result <- chisq.test(satisfaction_data)
+
+print(chi_result)
+# Access expected frequencies calculated in the lecture notes
+chi_result$expected
+```
+
+## Chi-Square Goodness of Fit: Website Traffic
+
+**Scenario:** Comparing observed traffic sources against a predicted 50/30/15/5 distribution.
+
+```{r}
+observed <- c(Direct = 480, Search = 320, Social = 140, Referral = 60)
+expected_probs <- c(0.50, 0.30, 0.15, 0.05)
+
+gof_result <- chisq.test(observed, p = expected_probs)
+
+print(gof_result)
+```
+
+## ANOVA: Marketing Campaign Comparison
+
+**Scenario:** Weekly sales across three different campaigns.\
+
+```{r}
+# Create tidy data frame
+campaign_data <- data.frame(
+  Campaign = rep(c("A", "B", "C"), each = 5),
+  Sales = c(12, 14, 11, 13, 10,  # A
+            15, 16, 14, 18, 17,  # B
+            10, 12, 11, 9, 13)   # C
+)
+
+# Fit ANOVA model
+anova_model <- aov(Sales ~ Campaign, data = campaign_data)
+summary(anova_model)
+
+# Post-hoc analysis (Tukey HSD)
+TukeyHSD(anova_model)
+```
+
+## Simple Linear Regression: Study Hours
+
+**Scenario:** Predicting exam scores based on hours studied.
+
+```{r}
+# 1. Define the data
+study_data <- data.frame(
+  Hours = c(2, 3, 4, 5, 6),
+  Score = c(65, 70, 80, 85, 90)
+)
+
+# 2. Fit the OLS model
+reg_model <- lm(Score ~ Hours, data = study_data)
+
+# 3. Create the scatter plot
+plot(study_data$Hours, study_data$Score, 
+     pch = 16,            # Solid circle point style
+     col = "blue",        # Point color
+     main = "Regression: Study Hours vs. Exam Score",
+     xlab = "Hours", 
+     ylab = "Score")
+
+# 4. Add the regression line
+# abline() can take the model object directly to draw the best-fit line
+abline(reg_model, col = "red", lwd = 2)
+```
+
+## Multiple Regression: House Prices
+
+**Scenario:** Predicting price based on size and number of bedrooms.
+
+```{r}
+house_data <- data.frame(
+  Price = c(2.5, 3.0, 2.8, 3.5, 3.2),
+  Size = c(1.5, 2.0, 1.8, 2.2, 2.0),
+  Bedrooms = c(3, 4, 3, 4, 3)
+)
+
+# Fit multiple regression
+multi_model <- lm(Price ~ Size + Bedrooms, data = house_data)
+
+summary(multi_model)
+
+# Check for Multicollinearity (VIF)
+# requires 'car' package: install.packages("car")
+# car::vif(multi_model)
+```

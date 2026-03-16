@@ -392,7 +392,7 @@ kable(sample_data, caption = "Random Sample (10 rows)")
 ```
 
 | Strategy       | Approach                 | Key Benefit                     |
-|------------------|------------------------|-------------------------------|
+|----------------|--------------------------|---------------------------------|
 | Dimensionality | Feature Extraction (PCA) | Eliminates redundant attributes |
 | Numerosity     | Data Approximation       | Reduces storage and CPU load    |
 | Sampling       | Representative Subset    | Faster prototyping and EDA      |
@@ -454,7 +454,7 @@ kable(df_age, caption = "Age Group Hierarchy")
 ```
 
 | Method | Optimization Goal | Risk |
-|------------------------|------------------------|------------------------|
+|----|----|----|
 | Equal-Width | Maintains value distribution | Sensitive to outliers |
 | Equal-Frequency | Maintains sample distribution | May group very different values |
 | Entropy-Based | Maximizes Class Purity | Requires target labels (Supervised) |
