@@ -17,6 +17,7 @@ services:
       context: ./stream-processor
       dockerfile: Dockerfile
     user: "1000:1000"
+    working_dir: /tmp
     env_file:
       - .env
     volumes:
