@@ -30,6 +30,9 @@
   },
   "dependencies": {
     "@aws-sdk/client-kinesis": "^3.1024.0",
-    "eventsource": "^4.1.0"
+    "dotenv": "^17.4.2",
+    "eventsource": "^4.1.0",
+    "kafkajs": "^2.2.4",
+    "redis": "^4.6.13"
   }
 }

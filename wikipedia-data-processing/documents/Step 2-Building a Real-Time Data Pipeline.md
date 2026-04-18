@@ -1,96 +1,124 @@
-# Step 2: Build the Real-Time Kinesis -> S3 Pipeline
+# Step 2: Build the Real-Time S3-Triggered Pipeline
 
 ## Goal
 
-In this step, you will create a Glue Streaming job that reads events from Kinesis and writes raw JSON files to S3 every 60 seconds.
+In this step, you will create an event-driven streaming pipeline. Because Kinesis creation is restricted in this environment, you will use **S3 Event Notifications** and **SQS** to simulate a real-time stream. A Glue Streaming job will "listen" to the SQS queue and move incoming data to your Bronze layer.
 
-Result:
-1. Kinesis records are continuously moved to S3 (Bronze layer).
-2. A Glue Crawler creates a queryable table.
-3. Athena can query incoming Wikipedia events.
+**Result:**
+1. JSON events dropped by EC2 are detected via SQS.
+2. Glue Streaming moves these records to the Bronze folder every 60 seconds.
+3. A Glue Crawler creates a queryable table for Athena.
 
 ## Naming convention (recommended)
 
-Use the same names everywhere to avoid confusion:
-1. Kinesis stream: `wiki-kinesis-stream`
-2. Bronze bucket: `wiki-knowledge-lake-bronze-<your-unique-suffix>`
-3. Raw folder: `raw-edits/`
-4. Glue database: `wiki_db`
-5. Raw table: `raw_edits`
+Use consistent names to avoid "Resource Not Found" errors:
+1. S3 Bucket: `wiki-knowledge-lake-<your-unique-suffix>`
+2. SQS Queue: `wiki-event-queue`
+3. Landing folder (Source): `landing/`
+4. Bronze folder (Sink): `bronze/`
+5. Glue Database: `wiki_db`
+6. Raw table: `raw_edits`
 
-Note: S3 bucket names are globally unique, so add a suffix like your initials or student ID.
+> **Note:** S3 bucket names are globally unique. Add a suffix like your student ID or initials.
 
-## 1. Create S3 Bronze destination
+---
 
-1. Open S3 Console.
-2. Create bucket: `wiki-knowledge-lake-bronze-<your-unique-suffix>`.
-3. Keep default settings (block public access enabled).
-4. Create folder path: `raw-edits/`.
+## 1. Prepare the S3 Bucket and Folders
 
-Target path format:
+1. Open the **S3 Console**.
+2. Create a bucket: `wiki-knowledge-lake-<your-unique-suffix>`.
+3. Inside the bucket, create the following folders (prefixes):
+   * `landing/` (Where EC2 drops raw events)
+   * `bronze/` (Where the streaming job saves processed raw data)
+   * `checkpoints/` (For Glue metadata)
 
-`s3://wiki-knowledge-lake-bronze-<your-unique-suffix>/raw-edits/`
+## 2. Create the SQS Queue and S3 Event
 
-## 2. Create Glue Streaming ETL job
+1. **Create Queue:** Go to **SQS Console** -> **Create Queue**. Name it `wiki-event-queue`. Keep defaults and Create.
+2. **Set Notification:** * Go back to your **S3 Bucket** -> **Properties** tab.
+   * Scroll to **Event notifications** -> **Create event notification**.
+   * **Event name:** `LandingToSQS`.
+   * **Prefix:** `landing/` (**CRITICAL:** Do not leave this blank. Restricting it to the landing folder prevents infinite loops).
+   * **Event types:** Select `All object create events`.
+   * **Destination:** SQS Queue -> Choose `wiki-event-queue`.
+```
+{
+  "Version": "2012-10-17",
+  "Id": "__default_policy_ID",
+  "Statement": [
+    {
+      "Sid": "__owner_statement",
+      "Effect": "Allow",
+      "Principal": {
+        "AWS": "arn:aws:iam::036628614391:root"
+      },
+      "Action": "SQS:*",
+      "Resource": "arn:aws:sqs:us-east-1:036628614391:wiki-event-queue"
+    },
+    {
+      "Sid": "AllowS3ToPublishMessages",
+      "Effect": "Allow",
+      "Principal": {
+        "Service": "s3.amazonaws.com"
+      },
+      "Action": "sqs:SendMessage",
+      "Resource": "arn:aws:sqs:us-east-1:036628614391:wiki-event-queue",
+      "Condition": {
+        "ArnLike": {
+          "aws:SourceArn": "arn:aws:s3:::wiki-knowledge-lake-*"
+        }
+      }
+    }
+  ]
+}
+```
+## 3. Create Glue Streaming ETL job
 
-1. Open AWS Glue Studio.
-2. Go to Jobs -> Create job.
-3. Choose Visual with source and target.
-4. Set source to Amazon Kinesis.
-5. Set target to Amazon S3.
+1. Open **AWS Glue Studio** -> **Jobs** -> Spark Streaming -> **Visual with source and target**.
+2. **Source:** Select **Amazon S3**.
+3. **Target:** Select **Amazon S3**.
 
-Configure source (Kinesis):
-1. Stream: `wiki-kinesis-stream`
-2. Starting position: Latest
-3. Infer schema: enabled (for first run)
+**Configure Source (S3 Streaming):**
+1. **S3 Source Type:** Change dropdown to **S3 Streaming**.
+2. **S3 source path:** `s3://wiki-knowledge-lake-<suffix>/landing/`.
+3. **SQS queue URL:** Paste your `wiki-event-queue` URL.
+4. **Data format:** JSON.
 
-Configure target (S3):
-1. Format: JSON
-2. S3 target: `s3://wiki-knowledge-lake-bronze-<your-unique-suffix>/raw-edits/`
-3. Compression: optional (GZIP is fine)
+**Configure Target (S3):**
+1. **Format:** JSON.
+2. **S3 Target Path:** `s3://wiki-knowledge-lake-<suffix>/bronze/`.
 
-Job details:
-1. Job type: Streaming
-2. IAM role: role with permissions for Kinesis + S3 + Glue
-3. Window size: `60 seconds` (important to reduce tiny files)
+**Job Details tab:**
+1. **IAM Role:** Select the provided lab role (usually `voclabs`).
+2. **Type:** Spark Streaming.
+3. **Window size:** `60 seconds` (This controls how often Glue writes a file to S3).
+4. **Checkpoint location:** `s3://wiki-knowledge-lake-<suffix>/checkpoints/`.
 
-## 3. Start the streaming job
+## 4. Start the Pipeline
 
-1. Save the job.
-2. Start job run.
-3. Wait 2 to 5 minutes.
-4. Check S3 `raw-edits/` for new JSON files.
+1. **Save** and **Run** the Glue Job.
+2. Ensure your **Step 1 Ingestion (EC2)** script is running and writing JSON files to the `/landing` folder.
+3. Wait 3-5 minutes, then check the `/bronze` folder. You should see new JSON files appearing.
 
-If files are not appearing, confirm Step 1 ingestion container is still running.
+## 5. Create and run Glue Crawler
 
-## 4. Create and run Glue Crawler
+1. Open **Glue -> Crawlers** -> **Create crawler**.
+2. **Name:** `wiki-bronze-crawler`.
+3. **Data source:** `s3://wiki-knowledge-lake-<suffix>/bronze/`.
+4. **Output database:** `wiki_db` (Create it if it doesn't exist).
+5. **Run** the crawler and wait for the status to return to `Ready`.
 
-Glue crawler will register schema so Athena can query your data.
+## 6. Verify in Athena
 
-1. Open Glue -> Crawlers -> Create crawler.
-2. Name: `wiki-bronze-crawler`
-3. Data source: `s3://wiki-knowledge-lake-bronze-<your-unique-suffix>/raw-edits/`
-4. Output database: `wiki_db` (create if needed)
-5. Run crawler.
-
-Expected result:
-1. Database: `wiki_db`
-2. Table: `raw_edits`
-
-## 5. Verify in Athena
-
-Open Athena and run:
+Open the Athena Query Editor and run the following:
 
 ```sql
 SELECT server_name, COUNT(*) AS edits
-FROM wiki_db.raw_edits
+FROM wiki_db.bronze
 GROUP BY server_name
 ORDER BY edits DESC
-LIMIT 20;
+LIMIT 10;
 ```
-
-If query returns rows, Step 2 is successful.
-
 ## 6. Troubleshooting
 
 No files in S3:

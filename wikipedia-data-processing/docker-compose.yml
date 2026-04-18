@@ -1,0 +1,68 @@
+services:
+  app:
+    build:
+      context: ./data-ingestion
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    env_file:
+      - .env
+    command: ["node", "dist/index.js"]
+    depends_on:
+      kafka:
+        condition: service_healthy
+
+  stream-processor:
+    build:
+      context: ./stream-processor
+      dockerfile: Dockerfile
+    user: "1000:1000"
+    working_dir: /tmp
+    env_file:
+      - .env
+    volumes:
+      - csv_data:/app/data/csv
+    depends_on:
+      - kafka
+
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.0.1
+    container_name: zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+
+  kafka:
+    image: confluentinc/cp-kafka:7.0.1
+    container_name: kafka
+    ports:
+      - "9092:9092"
+    depends_on:
+      - zookeeper
+    healthcheck:
+      test: ["CMD", "cub", "kafka-ready", "-b", "localhost:9092", "1", "1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: 'zookeeper:2181'
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_CONFLUENT_LICENSE_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_CONFLUENT_BALANCER_TOPIC_REPLICATION_FACTOR: 1
+
+volumes:
+  csv_data:
+    driver: local
+    driver_opts:
+      type: none
+      device: ./data/csv
+      o: bind
+
+networks:
+  default:
+    driver: bridge

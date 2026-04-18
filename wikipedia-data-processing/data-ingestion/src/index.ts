@@ -1,25 +1,16 @@
-import { KinesisPublisher } from "./aws/kinesisPublisher.js";
-import { getConfig } from "./config/env.js";
+import { connectProducer, disconnectProducer } from "./kafka/producer.js";
 import { listenRecentChanges } from "./wikipedia/listenRecentChanges.js";
 import { error, info } from "./utils/logger.js";
 
-function main(): void {
-	const config = getConfig();
+async function main(): Promise<void> {
+	await connectProducer();
 
-	info(
-		`Starting Wikipedia SSE -> Kinesis bridge (stream=${config.kinesisStreamName}, region=${config.awsRegion})`,
-	);
+	const listener = listenRecentChanges();
 
-	const publisher = new KinesisPublisher(config.awsRegion, config.kinesisStreamName);
-	const listener = listenRecentChanges({
-		sseUrl: config.wikipediaSseUrl,
-		publisher,
-		logEveryNEvents: config.logEveryNEvents,
-	});
-
-	const shutdown = (signal: string): void => {
+	const shutdown = async (signal: string): Promise<void> => {
 		info(`Received ${signal}. Shutting down...`);
 		listener.stop();
+		await disconnectProducer();
 		process.exit(0);
 	};
 
@@ -27,11 +18,8 @@ function main(): void {
 	process.on("SIGTERM", () => shutdown("SIGTERM"));
 }
 
-try {
-	main();
-} catch (cause: unknown) {
-	const message = cause instanceof Error ? cause.message : "Unknown startup failure";
-	error(`Startup failed: ${message}`);
+main().catch((err) => {
+	error(`Startup failed: ${err.message}`);
 	process.exit(1);
-}
+});
 
