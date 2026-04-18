@@ -1,10 +1,23 @@
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql.functions import from_json, col, to_json, from_unixtime, to_timestamp
 from pyspark.sql.types import StructType, ArrayType, MapType
+import os
+import shutil
 import time
 from schema import wikimedia_schema
 from spark import create_spark_session
-from config import KAFKA_BROKERS, KAFKA_TOPIC, OUTPUT_PATH, CHECKPOINT_PATH
+from config import (
+	KAFKA_BROKERS,
+	KAFKA_TOPIC,
+	OUTPUT_PATH,
+	CHECKPOINT_PATH,
+	KAFKA_STARTING_OFFSETS,
+	KAFKA_FAIL_ON_DATA_LOSS,
+	KAFKA_MAX_OFFSETS_PER_TRIGGER,
+	RESET_CHECKPOINT_ON_START,
+)
+from db.connection import ensure_table_exists
+from db.writer import write_batch_to_postgres
 
 
 def process_stream(spark: SparkSession, kafka_brokers: str, kafka_topic: str) -> DataFrame:
@@ -13,18 +26,29 @@ def process_stream(spark: SparkSession, kafka_brokers: str, kafka_topic: str) ->
 	"""
 	print("Initializing Kafka stream processing...")
 	try:
-		stream_df = (
+		stream_reader = (
 			spark.readStream.format("kafka")
 			.option("kafka.bootstrap.servers", kafka_brokers)
 			.option("subscribe", kafka_topic)
-			.option("startingOffsets", "latest")
-			.load()
+			.option("startingOffsets", KAFKA_STARTING_OFFSETS)
+			.option("failOnDataLoss", str(KAFKA_FAIL_ON_DATA_LOSS).lower())
 		)
+
+		if KAFKA_MAX_OFFSETS_PER_TRIGGER:
+			stream_reader = stream_reader.option(
+				"maxOffsetsPerTrigger", KAFKA_MAX_OFFSETS_PER_TRIGGER
+			)
+
+		stream_df = stream_reader.load()
 
 		# Parse the value from JSON and apply the schema
 		json_df = stream_df.select(from_json(col("value").cast("string"), wikimedia_schema).alias("data"))
 
-		print("Successfully read from Kafka stream and parsed JSON.")
+		print(
+			"Successfully read from Kafka stream and parsed JSON. "
+			f"startingOffsets={KAFKA_STARTING_OFFSETS}, "
+			f"failOnDataLoss={str(KAFKA_FAIL_ON_DATA_LOSS).lower()}"
+		)
 
 		# Select, timestamp, and deduplicate events to reduce repeated rows across reconnects.
 		processed_df = (
@@ -41,11 +65,28 @@ def process_stream(spark: SparkSession, kafka_brokers: str, kafka_topic: str) ->
 		raise
 
 
+def _is_kafka_offset_out_of_range_error(err: Exception) -> bool:
+	err_text = str(err)
+	keywords = [
+		"OffsetOutOfRangeException",
+		"Cannot fetch offset",
+		"Some data may have been lost",
+		"failOnDataLoss",
+	]
+	return any(keyword in err_text for keyword in keywords)
+
+
+def _reset_checkpoint_if_configured() -> None:
+	if RESET_CHECKPOINT_ON_START and os.path.isdir(CHECKPOINT_PATH):
+		print(f"RESET_CHECKPOINT_ON_START=true, deleting checkpoint path: {CHECKPOINT_PATH}")
+		shutil.rmtree(CHECKPOINT_PATH, ignore_errors=True)
+
+
 def write_stream(
 	df: DataFrame, output_path: str, checkpoint_path: str, trigger_interval: int = 10
 ) -> None:
 	"""
-	Writes a DataFrame to a stream.
+	Writes each micro-batch to both CSV files and PostgreSQL.
 	"""
 	print(f"Attempting to write stream to path: {output_path}")
 	try:
@@ -54,12 +95,31 @@ def write_stream(
 		retry_delay_seconds = 5
 		query = None
 
+		def process_batch(batch_df, batch_id):
+			try:
+				# Write to CSV — preserves the existing file-based output
+				(
+					batch_df.write
+					.mode("append")
+					.option("header", "true")
+					.csv(output_path)
+				)
+			except Exception as csv_err:
+				print(f"[Batch {batch_id}] CSV write failed: {csv_err}")
+				raise
+
+			try:
+				# Write to PostgreSQL
+				write_batch_to_postgres(batch_df)
+			except Exception as db_err:
+				print(f"[Batch {batch_id}] PostgreSQL write failed: {db_err}")
+				raise
+
 		for attempt in range(1, max_attempts + 1):
 			try:
 				query = (
-					csv_safe_df.writeStream.format("csv")
-					.option("path", output_path)
-					.option("header", "true")
+					csv_safe_df.writeStream
+					.foreachBatch(process_batch)
 					.option("checkpointLocation", checkpoint_path)
 					.trigger(processingTime=f"{trigger_interval} seconds")
 					.start()
@@ -80,8 +140,16 @@ def write_stream(
 		print("Write stream started successfully.")
 		query.awaitTermination()
 	except Exception as e:
+		if _is_kafka_offset_out_of_range_error(e):
+			print(
+				"Detected Kafka offset out-of-range/data-loss condition. "
+				"This typically means checkpointed offsets are older than Kafka retention. "
+				"Current config uses failOnDataLoss="
+				f"{str(KAFKA_FAIL_ON_DATA_LOSS).lower()}. "
+				"If this keeps happening, enable RESET_CHECKPOINT_ON_START=true once "
+				"to rebuild consumption state from KAFKA_STARTING_OFFSETS."
+			)
 		print(f"An error occurred in write_stream: {e}")
-		# Re-raise the exception to see the full traceback in the logs
 		raise
 
 
@@ -112,7 +180,12 @@ def prepare_for_csv(df: DataFrame) -> DataFrame:
 
 
 def run_pipeline() -> None:
-	"""Create Spark session, read from Kafka, and write results to CSV stream."""
+	"""Create Spark session, ensure DB table exists, read from Kafka, and write to CSV + PostgreSQL."""
+	ensure_table_exists()
+	_reset_checkpoint_if_configured()
 	spark = create_spark_session()
-	processed_df = process_stream(spark, KAFKA_BROKERS, KAFKA_TOPIC)
-	write_stream(processed_df, OUTPUT_PATH, CHECKPOINT_PATH)
+	try:
+		processed_df = process_stream(spark, KAFKA_BROKERS, KAFKA_TOPIC)
+		write_stream(processed_df, OUTPUT_PATH, CHECKPOINT_PATH)
+	finally:
+		spark.stop()

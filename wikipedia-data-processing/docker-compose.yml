@@ -34,6 +34,8 @@ services:
     depends_on:
       kafka:
         condition: service_healthy
+      db:
+        condition: service_healthy
 
   zookeeper:
     image: confluentinc/cp-zookeeper:7.0.1
@@ -62,17 +64,61 @@ services:
       KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:29092
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
-
+  db:
+    image: postgres:15
+    container_name: wikipedia_db
+    restart: always
+    environment:
+      - POSTGRES_USER=superset
+      - POSTGRES_PASSWORD=superset_pass
+      - POSTGRES_DB=wikipedia
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U superset -d wikipedia"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+  
+  grafana:
+    image: grafana/grafana-enterprise:latest
+    container_name: grafana
+    ports:
+      - "3001:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - csv_data:/app/data/csv:ro
+    depends_on:
+      - db
 volumes:
   csv_data:
     driver: local
     driver_opts:
       type: none
-      device: ./data/csv
+      device: ${PWD}/data/csv
       o: bind
   checkpoint_data:
     driver: local
     driver_opts:
       type: none
-      device: ./data/checkpoint
+      device: ${PWD}/data/checkpoint
+      o: bind
+  
+  postgres_data:
+    driver: local
+    driver_opts:
+      type: none
+      device: ${PWD}/data/postgres
+      o: bind
+  
+  grafana_data:
+    driver: local
+    driver_opts:
+      type: none
+      device: ${PWD}/data/grafana
       o: bind
