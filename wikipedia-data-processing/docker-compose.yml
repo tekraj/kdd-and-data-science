@@ -3,10 +3,7 @@ services:
     build:
       context: ./data-ingestion
       dockerfile: Dockerfile
-    ports:
-      - "3000:3000"
-    env_file:
-      - .env
+    env_file: .env
     command: ["node", "dist/index.js"]
     depends_on:
       kafka:
@@ -16,18 +13,30 @@ services:
     build:
       context: ./stream-processor
       dockerfile: Dockerfile
-    user: "1000:1000"
-    working_dir: /tmp
-    env_file:
-      - .env
+    working_dir: /app
+    env_file: .env
+    environment:
+      HOME: /home/sparkuser
+      HADOOP_USER_NAME: sparkuser
+      CHECKPOINT_PATH: /app/data/checkpoint
+      # Ensure PySpark uses the right python version
+      PYSPARK_PYTHON: python3
+      PYSPARK_DRIVER_PYTHON: python3
     volumes:
       - csv_data:/app/data/csv
+      - checkpoint_data:/app/data/checkpoint
+    # The --conf spark.sql.streaming.checkpointLocation is a good backup
+    command: >
+      spark-submit 
+      --conf spark.jars.ivy=/tmp/.ivy2 
+      --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.4.0 
+      /app/main.py
     depends_on:
-      - kafka
+      kafka:
+        condition: service_healthy
 
   zookeeper:
     image: confluentinc/cp-zookeeper:7.0.1
-    container_name: zookeeper
     environment:
       ZOOKEEPER_CLIENT_PORT: 2181
       ZOOKEEPER_TICK_TIME: 2000
@@ -36,24 +45,23 @@ services:
     image: confluentinc/cp-kafka:7.0.1
     container_name: kafka
     ports:
-      - "9092:9092"
+      - "29092:29092"
     depends_on:
       - zookeeper
     healthcheck:
-      test: ["CMD", "cub", "kafka-ready", "-b", "localhost:9092", "1", "1"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+      # This healthcheck is more robust
+      test: ["CMD", "nc", "-z", "localhost", "9092"]
+      interval: 5s
+      timeout: 10s
+      retries: 10
     environment:
       KAFKA_BROKER_ID: 1
       KAFKA_ZOOKEEPER_CONNECT: 'zookeeper:2181'
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      # INSIDE the network, use 'kafka:9092'. OUTSIDE (your laptop), use 'localhost:29092'
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:29092
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
-      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
-      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
-      KAFKA_CONFLUENT_LICENSE_TOPIC_REPLICATION_FACTOR: 1
-      KAFKA_CONFLUENT_BALANCER_TOPIC_REPLICATION_FACTOR: 1
 
 volumes:
   csv_data:
@@ -62,7 +70,9 @@ volumes:
       type: none
       device: ./data/csv
       o: bind
-
-networks:
-  default:
-    driver: bridge
+  checkpoint_data:
+    driver: local
+    driver_opts:
+      type: none
+      device: ./data/checkpoint
+      o: bind

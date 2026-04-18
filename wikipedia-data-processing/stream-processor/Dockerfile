@@ -1,26 +1,27 @@
-# Use an official Spark image as a parent image
 FROM apache/spark-py:v3.4.0
 
 USER root
 
-# Create a non-root user
-RUN groupadd --system spark && useradd --system --gid spark spark
+# Create a specific group and user with known IDs
+RUN groupadd -g 1000 sparkgroup && \
+    useradd -u 1000 -g 1000 -m -s /bin/bash sparkuser
 
-# Create app directory and change ownership
-RUN mkdir -p /app && chown -R spark:spark /app
+# Create app and Ivy directories with correct permissions
+RUN mkdir -p /app /tmp/.ivy2 && \
+    chown -R sparkuser:sparkgroup /app /tmp/.ivy2
 
-# Set the working directory
 WORKDIR /app
 
-# Copy the requirements file and install dependencies
+# Install Python dependencies
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy the application code and change ownership
-COPY --chown=spark:spark ./app .
+# Copy application code
+COPY --chown=sparkuser:sparkgroup ./app .
 
-# Switch to the non-root user
-USER spark
+# Switch to the named user
+USER sparkuser
+ENV HOME=/home/sparkuser
 
-# Set the entrypoint to run the Spark application
-CMD ["spark-submit", "--packages", "org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.0", "main.py"]
+# Entrypoint remains the same, but we will pass config via Compose
+CMD ["spark-submit", "main.py"]
