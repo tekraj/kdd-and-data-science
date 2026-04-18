@@ -3,7 +3,7 @@ WORKDIR /app
 
 FROM base AS deps
 COPY package.json pnpm-lock.yaml ./
-RUN corepack enable && pnpm install --frozen-lockfile
+RUN corepack enable && pnpm install
 
 FROM deps AS build
 COPY tsconfig.json ./
@@ -15,8 +15,9 @@ WORKDIR /app
 ENV NODE_ENV=production
 
 COPY package.json pnpm-lock.yaml ./
-RUN corepack enable && pnpm install --frozen-lockfile --prod
+RUN corepack enable && pnpm install --prod
 
 COPY --from=build /app/dist ./dist
+COPY --from=deps /app/node_modules ./node_modules
 
 CMD ["node", "dist/index.js"]
