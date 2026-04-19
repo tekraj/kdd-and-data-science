@@ -96,17 +96,17 @@ def write_stream(
 		query = None
 
 		def process_batch(batch_df, batch_id):
-			try:
-				# Write to CSV — preserves the existing file-based output
-				(
-					batch_df.write
-					.mode("append")
-					.option("header", "true")
-					.csv(output_path)
-				)
-			except Exception as csv_err:
-				print(f"[Batch {batch_id}] CSV write failed: {csv_err}")
-				raise
+			# try:
+			# 	# Write to CSV — preserves the existing file-based output
+			# 	(
+			# 		batch_df.write
+			# 		.mode("append")
+			# 		.option("header", "true")
+			# 		.csv(output_path)
+			# 	)
+			# except Exception as csv_err:
+			# 	print(f"[Batch {batch_id}] CSV write failed: {csv_err}")
+			# 	raise
 
 			try:
 				# Write to PostgreSQL
