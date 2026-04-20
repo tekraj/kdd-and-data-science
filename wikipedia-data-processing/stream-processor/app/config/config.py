@@ -5,7 +5,8 @@ load_dotenv()
 
 KAFKA_BROKERS = os.getenv("KAFKA_BROKERS", "kafka:9092")
 KAFKA_TOPIC = os.getenv("KAFKA_TOPIC", "wikipedia-stream")
-OUTPUT_PATH = os.getenv("OUTPUT_PATH", "/app/data/csv")
+ML_RETRAIN_TOPIC = os.getenv("ML_RETRAIN_TOPIC", "ml-retrain-trigger")
+ML_RETRAIN_BATCH_FREQUENCY = int(os.getenv("ML_RETRAIN_BATCH_FREQUENCY", "100"))
 CHECKPOINT_PATH = os.getenv("CHECKPOINT_PATH", "/app/data/checkpoint")
 
 

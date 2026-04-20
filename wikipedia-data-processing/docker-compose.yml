@@ -1,4 +1,6 @@
 services:
+ 
+
   app:
     build:
       context: ./data-ingestion
@@ -23,7 +25,7 @@ services:
       PYSPARK_PYTHON: python3
       PYSPARK_DRIVER_PYTHON: python3
     volumes:
-      - csv_data:/app/data/csv
+      - ml_models_data:/app/data/models
       - checkpoint_data:/app/data/checkpoint
     # The --conf spark.sql.streaming.checkpointLocation is a good backup
     command: >
@@ -37,6 +39,60 @@ services:
       db:
         condition: service_healthy
 
+  ml-trainer-service:
+    profiles: ["listener-only"]
+    build:
+      context: ./ml-models
+      dockerfile: Dockerfile
+    working_dir: /app
+    env_file: .env
+    environment:
+      HOME: /home/sparkuser
+      HADOOP_USER_NAME: sparkuser
+      CHECKPOINT_PATH: /app/data/checkpoint
+      # Ensure PySpark uses the right python version
+      PYSPARK_PYTHON: python3
+      PYSPARK_DRIVER_PYTHON: python3
+    volumes:
+      - ml_models_data:/app/data/models
+      - checkpoint_data:/app/data/checkpoint
+    # Listener-only worker (Spark consumer). No HTTP endpoint is exposed here.
+    command: >
+      spark-submit 
+      --conf spark.jars.ivy=/tmp/.ivy2 
+      --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.4.0 
+      /app/spark/listener_main.py
+    depends_on:
+      kafka:
+        condition: service_healthy
+      db:
+        condition: service_healthy
+
+  ml-insights-api:
+    build:
+      context: ./ml-models
+      dockerfile: Dockerfile
+    working_dir: /app
+    env_file: .env
+    environment:
+      HOME: /home/sparkuser
+      HADOOP_USER_NAME: sparkuser
+      PORT: 8000
+      PYSPARK_PYTHON: python3
+      PYSPARK_DRIVER_PYTHON: python3
+    volumes:
+      - ml_models_data:/app/data/models
+      - checkpoint_data:/app/data/checkpoint
+    # HTTP API endpoint for Grafana/Infinity and other internal clients.
+    # Docker DNS URL: http://ml-insights-api:8000/power-editors
+    ports:
+      - "8000:8000"
+    command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+    depends_on:
+      kafka:
+        condition: service_healthy
+      db:
+        condition: service_healthy
   zookeeper:
     image: confluentinc/cp-zookeeper:7.0.1
     environment:
@@ -90,17 +146,17 @@ services:
     environment:
       - GF_SECURITY_ADMIN_USER=admin
       - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_INSTALL_PLUGINS=volkovlabs-echarts-panel,yesoreyeram-infinity-datasource
     volumes:
       - grafana_data:/var/lib/grafana
-      - csv_data:/app/data/csv:ro
     depends_on:
       - db
 volumes:
-  csv_data:
+  ml_models_data:
     driver: local
     driver_opts:
       type: none
-      device: ${PWD}/data/csv
+      device: ${PWD}/data/models
       o: bind
   checkpoint_data:
     driver: local
