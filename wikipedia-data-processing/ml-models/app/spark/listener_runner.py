@@ -1,5 +1,6 @@
 import re
 
+from classification import TfIdfConfig, TfIdfTrendingTopicsTrainer
 from clustering.streaming_kmeans import StreamingKMeansConfig, WikipediaStreamingKMeansTrainer
 from config import load_app_config
 from spark.event_parser import parse_retrain_event
@@ -18,15 +19,28 @@ def _build_trainer(spark, app_config) -> WikipediaStreamingKMeansTrainer:
     )
 
 
+def _build_tfidf_trainer(app_config) -> TfIdfTrendingTopicsTrainer:
+    return TfIdfTrendingTopicsTrainer(
+        TfIdfConfig(model_path=app_config.model.model_path),
+        app_config.database,
+    )
+
+
 def listen_and_retrain() -> None:
     app_config = load_app_config()
     spark = create_spark_session()
     trainer = _build_trainer(spark, app_config)
+    tfidf_trainer = _build_tfidf_trainer(app_config)
 
     try:
         trainer.bootstrap_if_missing()
     except Exception as err:
         print(f"[ML] Bootstrap training failed: {err}")
+
+    try:
+        tfidf_trainer.bootstrap_if_missing()
+    except Exception as err:
+        print(f"[ML] TF-IDF bootstrap training failed: {err}")
 
     # subscribePattern uses listTopics() instead of listOffsets() on specific
     # partitions, so it tolerates the topic not existing yet — the stream starts
@@ -55,6 +69,7 @@ def listen_and_retrain() -> None:
                     continue
                 first_id, last_id = event_window
                 trainer.retrain_for_id_window(first_id, last_id)
+                tfidf_trainer.retrain_for_id_window(first_id, last_id)
             except Exception as err:
                 print(f"[ML] Failed to process retrain event in batch {batch_id}: {err}")
 

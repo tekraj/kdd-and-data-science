@@ -4,7 +4,9 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException
 
+from classification import load_tfidf_trending_topics
 from clustering import load_cluster_insights
+from config import load_app_config
 from mappers import map_cluster_insights
 from spark.listener_runner import listen_and_retrain
 
@@ -62,26 +64,14 @@ def get_power_editors_raw() -> dict[str, Any]:
 
 
 @app.get("/trending-topics")
-def get_trending_topics() -> dict:
-    return {
-        "data": [
-            {
-                "topic": "Artificial Intelligence",
-                "mentions": 824,
-                "trend": "up",
-            },
-            {
-                "topic": "Climate Policy",
-                "mentions": 639,
-                "trend": "up",
-            },
-            {
-                "topic": "Global Elections",
-                "mentions": 577,
-                "trend": "stable",
-            },
-        ]
-    }
+def get_trending_topics() -> dict[str, Any]:
+    try:
+        app_config = load_app_config()
+        return load_tfidf_trending_topics(app_config.model.model_path)
+    except FileNotFoundError as err:
+        raise HTTPException(status_code=404, detail=str(err)) from err
+    except Exception as err:
+        raise HTTPException(status_code=500, detail=f"Failed to load trending topics: {err}") from err
 
 
 if __name__ == "__main__":

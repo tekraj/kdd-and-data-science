@@ -48,7 +48,7 @@ cd wikipedia-data-processing
 The pipeline uses local bind-mounted volumes. Create all required directories:
 
 ```bash
-mkdir -p data/checkpoint data/csv data/duckdb data/grafana data/postgres
+mkdir -p data/checkpoint data/csv data/duckdb data/grafana data/postgres data/models
 ```
 
 ---
