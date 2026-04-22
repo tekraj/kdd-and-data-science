@@ -22,6 +22,7 @@ COPY --chown=sparkuser:sparkgroup ./app .
 # Switch to the named user
 USER sparkuser
 ENV HOME=/home/sparkuser
+EXPOSE 8000
 
-# Entrypoint remains the same, but we will pass config via Compose
-CMD ["spark-submit", "main.py"]
+# Default to FastAPI. Compose can override this command for listener mode.
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]

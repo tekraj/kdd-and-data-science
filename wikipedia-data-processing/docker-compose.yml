@@ -1,12 +1,11 @@
 services:
+ 
+
   app:
     build:
       context: ./data-ingestion
       dockerfile: Dockerfile
-    ports:
-      - "3000:3000"
-    env_file:
-      - .env
+    env_file: .env
     command: ["node", "dist/index.js"]
     depends_on:
       kafka:
@@ -16,18 +15,86 @@ services:
     build:
       context: ./stream-processor
       dockerfile: Dockerfile
-    user: "1000:1000"
-    working_dir: /tmp
-    env_file:
-      - .env
+    working_dir: /app
+    env_file: .env
+    environment:
+      HOME: /home/sparkuser
+      HADOOP_USER_NAME: sparkuser
+      CHECKPOINT_PATH: /app/data/checkpoint
+      # Ensure PySpark uses the right python version
+      PYSPARK_PYTHON: python3
+      PYSPARK_DRIVER_PYTHON: python3
     volumes:
-      - csv_data:/app/data/csv
+      - ml_models_data:/app/data/models
+      - checkpoint_data:/app/data/checkpoint
+    # The --conf spark.sql.streaming.checkpointLocation is a good backup
+    command: >
+      spark-submit 
+      --conf spark.jars.ivy=/tmp/.ivy2 
+      --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.4.0 
+      /app/main.py
     depends_on:
-      - kafka
+      kafka:
+        condition: service_healthy
+      db:
+        condition: service_healthy
 
+  ml-trainer-service:
+    profiles: ["listener-only"]
+    build:
+      context: ./ml-models
+      dockerfile: Dockerfile
+    working_dir: /app
+    env_file: .env
+    environment:
+      HOME: /home/sparkuser
+      HADOOP_USER_NAME: sparkuser
+      CHECKPOINT_PATH: /app/data/checkpoint
+      # Ensure PySpark uses the right python version
+      PYSPARK_PYTHON: python3
+      PYSPARK_DRIVER_PYTHON: python3
+    volumes:
+      - ml_models_data:/app/data/models
+      - checkpoint_data:/app/data/checkpoint
+    # Listener-only worker (Spark consumer). No HTTP endpoint is exposed here.
+    command: >
+      spark-submit 
+      --conf spark.jars.ivy=/tmp/.ivy2 
+      --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.4.0 
+      /app/spark/listener_main.py
+    depends_on:
+      kafka:
+        condition: service_healthy
+      db:
+        condition: service_healthy
+
+  ml-insights-api:
+    build:
+      context: ./ml-models
+      dockerfile: Dockerfile
+    working_dir: /app
+    env_file: .env
+    environment:
+      HOME: /home/sparkuser
+      HADOOP_USER_NAME: sparkuser
+      PORT: 8000
+      PYSPARK_PYTHON: python3
+      PYSPARK_DRIVER_PYTHON: python3
+    volumes:
+      - ml_models_data:/app/data/models
+      - checkpoint_data:/app/data/checkpoint
+    # HTTP API endpoint for Grafana/Infinity and other internal clients.
+    # Docker DNS URL: http://ml-insights-api:8000/power-editors
+    ports:
+      - "8000:8000"
+    command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+    depends_on:
+      kafka:
+        condition: service_healthy
+      db:
+        condition: service_healthy
   zookeeper:
     image: confluentinc/cp-zookeeper:7.0.1
-    container_name: zookeeper
     environment:
       ZOOKEEPER_CLIENT_PORT: 2181
       ZOOKEEPER_TICK_TIME: 2000
@@ -36,33 +103,78 @@ services:
     image: confluentinc/cp-kafka:7.0.1
     container_name: kafka
     ports:
-      - "9092:9092"
+      - "29092:29092"
     depends_on:
       - zookeeper
     healthcheck:
-      test: ["CMD", "cub", "kafka-ready", "-b", "localhost:9092", "1", "1"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+      # This healthcheck is more robust
+      test: ["CMD", "nc", "-z", "localhost", "9092"]
+      interval: 5s
+      timeout: 10s
+      retries: 10
     environment:
       KAFKA_BROKER_ID: 1
       KAFKA_ZOOKEEPER_CONNECT: 'zookeeper:2181'
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      # INSIDE the network, use 'kafka:9092'. OUTSIDE (your laptop), use 'localhost:29092'
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:29092
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
-      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
-      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
-      KAFKA_CONFLUENT_LICENSE_TOPIC_REPLICATION_FACTOR: 1
-      KAFKA_CONFLUENT_BALANCER_TOPIC_REPLICATION_FACTOR: 1
-
+  db:
+    image: postgres:15
+    container_name: wikipedia_db
+    restart: always
+    environment:
+      - POSTGRES_USER=superset
+      - POSTGRES_PASSWORD=superset_pass
+      - POSTGRES_DB=wikipedia
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U superset -d wikipedia"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+  
+  grafana:
+    image: grafana/grafana-enterprise:latest
+    container_name: grafana
+    ports:
+      - "3001:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_INSTALL_PLUGINS=volkovlabs-echarts-panel,yesoreyeram-infinity-datasource
+    volumes:
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - db
 volumes:
-  csv_data:
+  ml_models_data:
     driver: local
     driver_opts:
       type: none
-      device: ./data/csv
+      device: ${PWD}/data/models
       o: bind
-
-networks:
-  default:
-    driver: bridge
+  checkpoint_data:
+    driver: local
+    driver_opts:
+      type: none
+      device: ${PWD}/data/checkpoint
+      o: bind
+  
+  postgres_data:
+    driver: local
+    driver_opts:
+      type: none
+      device: ${PWD}/data/postgres
+      o: bind
+  
+  grafana_data:
+    driver: local
+    driver_opts:
+      type: none
+      device: ${PWD}/data/grafana
+      o: bind

@@ -1,4 +1,4 @@
-from app.stream_processor import process_stream
+from spark.stream_processor import run_pipeline
 
 if __name__ == "__main__":
-    process_stream()
+    run_pipeline()
